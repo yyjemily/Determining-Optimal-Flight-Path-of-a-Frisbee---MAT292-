@@ -20,5 +20,4 @@ vel = np.array([14.0, 0.0, 2.0]) # initial velocity in m/s
 #guess angle initial conditions (phi, theta, gamma)
 ang = np.array([0.0, 0.0, (np.pi)/4]) # initial angular velocity in rad
 
-#guess angular velocity initial conditions (phi', theta', gamma')
-ang_vel = np.array([0.0, 0.0, 50.0]) # initial angular velocity in rad/s
+
