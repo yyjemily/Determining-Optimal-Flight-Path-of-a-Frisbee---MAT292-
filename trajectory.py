@@ -1,13 +1,13 @@
 import cv2
 import numpy as np
+import pandas as pd
 import time
+import matplotlib.pyplot as plt
 
-# --- 1. CONFIGURATION ---
+#config 
 video_path = "frisbee_real_data/IMG_5059.MOV"
-# ADJUST THESE: Example for a Bright Orange/Yellow frisbee
-# Use an HSV picker if your frisbee is a different color
-color_lower = np.array([5, 100, 100]) 
-color_upper = np.array([25, 255, 255])
+color_lower = np.array([0, 0, 120])  
+color_upper = np.array([180, 60, 255])
 
 # Lucas-Kanade Parameters (Increased window to account for background noise)
 lk_params = dict(winSize=(21, 21), 
@@ -19,7 +19,11 @@ feature_params = dict(maxCorners=10,
                       minDistance=7, 
                       blockSize=7)
 
-# --- 2. INITIALIZATION & ROI SELECTION ---
+trajectory_log = [] #store path to later be used for plotting + data extraction 
+#set scaling factor for frisbee
+frisbee_diameter_m = 0.274 # meters
+
+#Initialize & Rectangle of Interest Selection
 video = cv2.VideoCapture(video_path)
 ret, frame = video.read()
 if not ret:
@@ -46,6 +50,10 @@ while True:
     if cv2.waitKey(1) & 0xFF == 27: break
 cv2.destroyAllWindows()
 
+#calculate scaling factor
+pix_convert = x_max - x_min 
+scale_fac = frisbee_diameter_m/pix_convert
+
 # --- 3. TRACKING LOOP ---
 cap = cv2.VideoCapture(video_path)
 ret, old_frame = cap.read()
@@ -58,62 +66,87 @@ p0 = cv2.goodFeaturesToTrack(old_gray, mask=mask_init, **feature_params)
 
 trajectory_mask = np.zeros_like(old_frame)
 height, width = old_frame.shape[:2]
-
+frame_idx = 0 
 while True:
     ret, frame = cap.read()
     if not ret: break
+    frame_idx += 1
 
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    
-    # Color Mask to filter out crowd/stadium noise
     color_mask = cv2.inRange(hsv, color_lower, color_upper)
-    color_mask = cv2.medianBlur(color_mask, 5) # Clean up speckle noise
 
     if p0 is not None:
-        # Calculate Optical Flow
         p1, st, err = cv2.calcOpticalFlowPyrLK(old_gray, frame_gray, p0, None, **lk_params)
         
         good_new = []
-        good_old = []
-
-        # Validate points against the Color Mask
         if p1 is not None:
             for i, (new, old) in enumerate(zip(p1, p0)):
                 if st[i] == 1:
                     nx, ny = map(int, new.ravel())
-                    # Only keep point if it's within frame AND matches frisbee color
                     if 0 <= ny < height and 0 <= nx < width:
                         if color_mask[ny, nx] > 0:
                             good_new.append(new)
-                            good_old.append(old)
-
-        good_new = np.array(good_new).reshape(-1, 1, 2)
-        good_old = np.array(good_old).reshape(-1, 1, 2)
+                        else:
+                            # This helps you know if the color filter is the culprit
+                            print(f"Point dropped: Color at ({nx},{ny}) not in range")
 
         if len(good_new) > 0:
-            # Draw trajectory
-            for i, (new, old) in enumerate(zip(good_new, good_old)):
-                a, b = new.ravel()
-                c, d = old.ravel()
-                trajectory_mask = cv2.line(trajectory_mask, (int(a), int(b)), (int(c), int(d)), (0, 255, 0), 2)
-                frame = cv2.circle(frame, (int(a), int(b)), 5, (0, 0, 255), -1)
+            good_new = np.array(good_new).reshape(-1, 1, 2)
+            
+            # Add this inside your 'if len(good_new) > 0:' block
+            avg_x = np.mean(good_new[:, 0, 0])
+            avg_y = np.mean(good_new[:, 0, 1])
 
-            display_img = cv2.add(frame, trajectory_mask)
+            # Calculate how far the frisbee 'jumped' since the last frame
+            if len(trajectory_log) > 0:
+                last_x = trajectory_log[-1][1]
+                last_y = trajectory_log[-1][2]
+                distance_jumped = np.sqrt((avg_x - last_x)**2 + (avg_y - last_y)**2)
+                
+                # If the point jumped more than 100 pixels, it's probably noise (like a stadium light)
+                if distance_jumped > 100:
+                    p0 = None # Force reset
+                    print("Jumped too far! Likely tracked a stadium light or line.")
+                    continue 
+
+            trajectory_log.append([frame_idx, avg_x, avg_y])
+
+            # Draw for real-time visualization
+            for pt in good_new:
+                a, b = pt.ravel()
+                cv2.circle(frame, (int(a), int(b)), 3, (0, 0, 255), -1)
+            
             p0 = good_new
         else:
-            # If color match is lost, try redetecting in a small area around last known point
             p0 = None
-            display_img = frame
-    else:
-        # Re-detecting logic: Limit search to the color mask to avoid grabbing people
-        p0 = cv2.goodFeaturesToTrack(frame_gray, mask=color_mask, **feature_params)
-        display_img = frame
-
-    cv2.imshow('Frisbee Trajectory Tracking', display_img)
+    
+    cv2.imshow('Tracking', frame)
     old_gray = frame_gray.copy()
-
-    if cv2.waitKey(25) & 0xFF == 27: break
+    if cv2.waitKey(1) & 0xFF == 27: break
 
 cap.release()
 cv2.destroyAllWindows()
+
+# --- 4. DATA EXPORT & PLOTTING ---
+if trajectory_log:
+    df = pd.DataFrame(trajectory_log, columns=['Frame', 'X', 'Y'])
+    df.to_csv('frisbee_trajectory.csv', index=False)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['X'], df['Y'], label='Flight Path', color='blue', linewidth=2)
+    plt.scatter(df['X'], df['Y'], c=df['Frame'], cmap='viridis', s=10) # Color by time
+    
+    # Invert Y axis because in images (0,0) is top-left
+    plt.gca().invert_yaxis() 
+    
+    plt.title('Frisbee Flight Trajectory')
+    plt.xlabel('Horizontal Position (pixels)')
+    plt.ylabel('Vertical Position (pixels)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig('trajectory_plot.png')
+    plt.show()
+    print("Trajectory saved to 'frisbee_trajectory.csv' and 'trajectory_plot.png'")
+else:
+    print("No trajectory points were captured.")
