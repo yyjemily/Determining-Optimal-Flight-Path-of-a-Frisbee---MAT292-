@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 
 #config 
 video_path = "frisbee_real_data/IMG_5059.MOV"
-color_lower = np.array([0, 0, 120])  
-color_upper = np.array([180, 60, 255])
+color_lower = np.array([0, 0, 80])  
+color_upper = np.array([180, 80, 255])
 
 # Lucas-Kanade Parameters (Increased window to account for background noise)
 lk_params = dict(winSize=(21, 21), 
@@ -130,23 +130,27 @@ cv2.destroyAllWindows()
 
 # --- 4. DATA EXPORT & PLOTTING ---
 if trajectory_log:
-    df = pd.DataFrame(trajectory_log, columns=['Frame', 'X', 'Y'])
-    df.to_csv('frisbee_trajectory.csv', index=False)
+    df = pd.DataFrame(trajectory_log, columns=['Frame', 'X_px', 'Y_px'])
+    fps = 30 # Standard iPhone FPS, adjust if 60
+    df['Time_s'] = df['Frame'] / fps
+    df['X_m'] = (df['X_px'] - df['X_px'].iloc[0]) * scale_fac
+    df['Y_m'] = (df['Y_px'] - df['Y_px'].iloc[0]) * scale_fac * -1 #define up as positivie
     
-    plt.figure(figsize=(10, 6))
-    plt.plot(df['X'], df['Y'], label='Flight Path', color='blue', linewidth=2)
-    plt.scatter(df['X'], df['Y'], c=df['Frame'], cmap='viridis', s=10) # Color by time
+    #save as csv 
+    csv_filename = "frisbee_trajectory_data.csv"
+    df.to_csv(csv_filename, index=False)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    ax1.plot(df['Time_s'], df['X_m'], label='X Distance')
+    ax1.set_title('Horizontal Distance vs Time')
+    ax2.plot(df['Time_s'], df['Y_m'], color='orange', label='Y Distance')
+    ax2.set_title('Vertical Distance vs Time')
+    plt.tight_layout()
+
+    #save the plot
+
+    plot_filename = "frisbee_plot.png"
+    plt.savefig(plot_filename, dpi=300) # dpi=300 makes it high resolution for reports
+    print(f"Plot successfully saved as {plot_filename}")
     
-    # Invert Y axis because in images (0,0) is top-left
-    plt.gca().invert_yaxis() 
-    
-    plt.title('Frisbee Flight Trajectory')
-    plt.xlabel('Horizontal Position (pixels)')
-    plt.ylabel('Vertical Position (pixels)')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig('trajectory_plot.png')
     plt.show()
-    print("Trajectory saved to 'frisbee_trajectory.csv' and 'trajectory_plot.png'")
-else:
-    print("No trajectory points were captured.")
