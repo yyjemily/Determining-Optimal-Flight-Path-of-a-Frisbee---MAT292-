@@ -5,35 +5,28 @@ import matplotlib.pyplot as plt
 import os
 import glob
 
-# --- 1. CONFIGURATION & FOLDERS ---
 folder_path = "frisbee_real_data/"
-# Find all MOV files in the folder
 video_files = sorted(glob.glob(os.path.join(folder_path, "*.MOV")))
 
-# Create output directories so your files stay organized
 os.makedirs("results", exist_ok=True)
 os.makedirs("plots", exist_ok=True)
 
-# Tracking & Physics Settings
+frisbee_diameter_m = 0.274 
 color_lower = np.array([0, 0, 80])  
 color_upper = np.array([180, 80, 255])
-frisbee_diameter_m = 0.274 
 lk_params = dict(winSize=(31, 31), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 feature_params = dict(maxCorners=20, qualityLevel=0.01, minDistance=7, blockSize=7)
 
-# --- START MULTI-FILE LOOP ---
 for video_path in video_files:
     base_name = os.path.basename(video_path).split('.')[0]
     print(f"--- Processing: {base_name} ---")
     
     trajectory_log = []
-    
-    # 2. ROI SELECTION
     video = cv2.VideoCapture(video_path)
     ret, frame = video.read()
     if not ret: continue
 
-    # Use a temp window for ROI selection
+    # ROI Selection
     x_min, y_min, x_max, y_max = 36000, 36000, 0, 0
     def coordinat_chooser(event, x, y, flags, param):
         global x_min, y_min, x_max, y_max
@@ -51,13 +44,11 @@ for video_path in video_files:
 
     scale_fac = frisbee_diameter_m / max(1, (x_max - x_min))
 
-    # 3. TRACKING
+    # Tracking Logic
     cap = cv2.VideoCapture(video_path)
     ret, old_frame = cap.read()
     old_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
-    
-    mask_init = np.zeros_like(old_gray)
-    mask_init[y_min:y_max, x_min:x_max] = 255
+    mask_init = np.zeros_like(old_gray); mask_init[y_min:y_max, x_min:x_max] = 255
     p0 = cv2.goodFeaturesToTrack(old_gray, mask=mask_init, **feature_params)
 
     frame_idx = 0 
@@ -65,50 +56,39 @@ for video_path in video_files:
         ret, frame = cap.read()
         if not ret: break
         frame_idx += 1
-        
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         color_mask = cv2.inRange(hsv, color_lower, color_upper)
-
-        if p0 is None:
-            p0 = cv2.goodFeaturesToTrack(frame_gray, mask=color_mask, **feature_params)
 
         if p0 is not None:
             p1, st, err = cv2.calcOpticalFlowPyrLK(old_gray, frame_gray, p0, None, **lk_params)
             if p1 is not None:
                 good_new = [new for i, (new, old) in enumerate(zip(p1, p0)) if st[i] == 1 and color_mask[int(new.ravel()[1]), int(new.ravel()[0])] > 0]
-                
                 if len(good_new) > 0:
                     good_new = np.array(good_new).reshape(-1, 1, 2)
                     avg_x, avg_y = np.mean(good_new[:, 0, 0]), np.mean(good_new[:, 0, 1])
                     trajectory_log.append([frame_idx, avg_x, avg_y])
                     p0 = good_new
                 else: p0 = None
-
         cv2.imshow('Tracking', frame)
         old_gray = frame_gray.copy()
         if cv2.waitKey(1) & 0xFF == 27: break
-    
-    cap.release()
-    cv2.destroyAllWindows()
+    cap.release(); cv2.destroyAllWindows()
 
-    # 4. EXPORT
-    if trajectory_log:
+    # Data Processing with Angle of Release
+    if len(trajectory_log) > 2:
         df = pd.DataFrame(trajectory_log, columns=['Frame', 'X_px', 'Y_px'])
         df['Time_s'] = df['Frame'] / 30
         df['X_m'] = (df['X_px'] - df['X_px'].iloc[0]) * scale_fac
         df['Y_m'] = (df['Y_px'] - df['Y_px'].iloc[0]) * scale_fac * -1
 
-        # Save to specific folders
-        df.to_csv(os.path.join("results", f"{base_name}_results.csv"), index=False)
+        # --- CALCULATE ANGLE OF RELEASE (alpha0) ---
+        # Using first 3 frames to get a stable initial velocity vector
+        dx = df['X_m'].iloc[2] - df['X_m'].iloc[0]
+        dy = df['Y_m'].iloc[2] - df['Y_m'].iloc[0]
+        alpha0 = np.arctan2(dy, dx) # In Radians
         
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-        ax1.plot(df['Time_s'], df['X_m'], color='blue')
-        ax1.set_title(f"Displacement: {base_name}")
-        ax2.plot(df['Time_s'], df['Y_m'], color='orange')
-        plt.tight_layout()
-        plt.savefig(os.path.join("plots", f"{base_name}_plot.png"))
-        plt.close(fig) # CLEAN MEMORY
-        print(f"Saved results for {base_name}")
-
-print("--- ALL VIDEOS COMPLETED ---")
+        # Save results with alpha0 in the filename or a separate metadata file
+        df['alpha0_rad'] = alpha0
+        df.to_csv(os.path.join("results", f"{base_name}_results.csv"), index=False)
+        print(f"Saved {base_name}. Angle of Release: {np.degrees(alpha0):.2f}°")
