@@ -31,7 +31,7 @@ for video_path in video_files:
     ret, frame = video.read()
     if not ret: continue
 
-    # Use a temp window for ROI selection
+    #temp window for ROI selection
     x_min, y_min, x_max, y_max = 36000, 36000, 0, 0
     def coordinat_chooser(event, x, y, flags, param):
         global x_min, y_min, x_max, y_max
@@ -49,7 +49,7 @@ for video_path in video_files:
 
     scale_fac = frisbee_diameter_m / max(1, (x_max - x_min))
 
-    # Tracking set up and initialization
+    #Tracking set up and initialization
     cap = cv2.VideoCapture(video_path)
     ret, old_frame = cap.read()
     old_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
@@ -106,5 +106,4 @@ for video_path in video_files:
         plt.tight_layout()
         plt.savefig(os.path.join("plots", f"{base_name}_plot.png"))
         plt.close(fig) 
-        print(f"Saved results for {base_name}")
 

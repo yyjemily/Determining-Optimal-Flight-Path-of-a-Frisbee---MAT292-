@@ -25,8 +25,7 @@ Prepare Experimental Data:
 
 Review Outputs: 
 1. aerodynamic_summary.csv: list of optimized coefficients.
-2. /aerodynamic_fit_plots: 4-panel diagnostic visualizations for 
-   every trial.
+2. /aerodynamic_fit_plots: visualization plots for every trial.
 
 ## Dependencies
 NumPy: Numerical array processing.
